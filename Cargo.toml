@@ -43,3 +43,4 @@ dotenvy = "0.15"
 image = { version = "0.24", features = ["webp-encoder"] }
 imageproc = "0.23"
 rand_distr = "0.4"
+either = "=1.14.0"

@@ -58,11 +58,7 @@ mod tests {
 
     #[test]
     fn test_combine_and_split() {
-        let arrays = vec![
-            vec![1, 2, 3],
-            vec![4, 5],
-            vec![6, 7, 8, 9],
-        ];
+        let arrays = vec![vec![1, 2, 3], vec![4, 5], vec![6, 7, 8, 9]];
 
         let combined = combine_byte_arrays(&arrays);
         let split = split_byte_arrays(&combined).unwrap();
@@ -75,10 +71,7 @@ mod tests {
 
     #[test]
     fn test_empty_arrays() {
-        let arrays = vec![
-            Vec::<u8>::new(),
-            vec![1],
-        ];
+        let arrays = vec![Vec::<u8>::new(), vec![1]];
 
         let combined = combine_byte_arrays(&arrays);
         let split = split_byte_arrays(&combined).unwrap();
