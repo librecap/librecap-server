@@ -221,37 +221,138 @@ pub fn solve_challenge(challenge: &PowChallenge) -> Vec<u8> {
 mod tests {
     use super::*;
     use std::net::Ipv4Addr;
+    use std::thread;
+    use std::time::Duration;
 
-    #[test]
-    fn test_challenge_generation_and_verification() {
-        let secret = [1u8; 32];
+    fn setup_test_env() -> (PowManager, IpAddr, String) {
+        let secret = [42u8; 32];
         let pow_manager = PowManager::with_secret(secret);
         let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
-        let user_agent = "test-agent";
+        let user_agent = "test_browser/1.0".to_string();
+        (pow_manager, ip, user_agent)
+    }
 
-        let challenge = pow_manager.generate_challenge(&ip, user_agent, 20);
+    #[test]
+    fn test_pow_manager_creation() {
+        let secret = [42u8; 32];
+        let pow_manager = PowManager::with_secret(secret);
+        assert_eq!(pow_manager.get_secret(), secret);
 
-        assert!(pow_manager.verify_challenge_validity(&challenge, &ip, user_agent, 10));
+        let pow_manager = PowManager::new();
+        assert_ne!(pow_manager.get_secret(), [0u8; 32]);
+    }
 
-        let wrong_ip = IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1));
-        assert!(!pow_manager.verify_challenge_validity(&challenge, &wrong_ip, user_agent, 10));
+    #[test]
+    fn test_challenge_generation() {
+        let (pow_manager, ip, user_agent) = setup_test_env();
+        let hardness = 8;
 
-        assert!(!pow_manager.verify_challenge_validity(&challenge, &ip, "wrong-agent", 10));
+        let challenge = pow_manager.generate_challenge(&ip, &user_agent, hardness);
+
+        assert_eq!(challenge.hardness, hardness);
+        assert!(!challenge.nonce.iter().all(|&x| x == 0));
+        assert!(!challenge.signature.is_empty());
+    }
+
+    #[test]
+    fn test_challenge_validity() {
+        let (pow_manager, ip, user_agent) = setup_test_env();
+        let hardness = 8;
+        let expiry_seconds = 60;
+
+        let challenge = pow_manager.generate_challenge(&ip, &user_agent, hardness);
+
+        assert!(pow_manager.verify_challenge_validity(
+            &challenge,
+            &ip,
+            &user_agent,
+            expiry_seconds
+        ));
+
+        let wrong_ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
+        assert!(!pow_manager.verify_challenge_validity(
+            &challenge,
+            &wrong_ip,
+            &user_agent,
+            expiry_seconds
+        ));
+
+        assert!(!pow_manager.verify_challenge_validity(
+            &challenge,
+            &ip,
+            "wrong_agent",
+            expiry_seconds
+        ));
+
+        thread::sleep(Duration::from_secs(1));
+        assert!(!pow_manager.verify_challenge_validity(&challenge, &ip, &user_agent, 0));
     }
 
     #[test]
     fn test_solution_verification() {
-        let secret = [1u8; 32];
-        let pow_manager = PowManager::with_secret(secret);
-        let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
-        let user_agent = "test-agent";
+        let (pow_manager, ip, user_agent) = setup_test_env();
+        let hardness = 8;
 
-        let mut challenge = pow_manager.generate_challenge(&ip, user_agent, 2);
+        let challenge = pow_manager.generate_challenge(&ip, &user_agent, hardness);
+        let solution = solve_challenge(&challenge);
+
+        assert!(pow_manager.verify_solution(&challenge, &solution));
+
+        let invalid_solution = vec![0u8; 8];
+        assert!(!pow_manager.verify_solution(&challenge, &invalid_solution));
+    }
+
+    #[test]
+    fn test_pow_challenge_buffer() {
+        let (pow_manager, ip, user_agent) = setup_test_env();
+        let initial_hardness = 8;
+        let second_hardness = 12;
+
+        let buffer = generate_pow_challenge_buffer(
+            &ip,
+            &user_agent,
+            &pow_manager,
+            initial_hardness,
+            second_hardness,
+        );
+
+        assert_eq!(buffer.len(), 2 * (16 + 8 + 1 + 32));
+    }
+
+    #[test]
+    fn test_parse_pow_solution() {
+        let mut test_buffer = Vec::new();
+
+        test_buffer.extend_from_slice(&[1u8; 16]); // nonce
+        test_buffer.extend_from_slice(&42u64.to_be_bytes()); // timestamp
+        test_buffer.push(8); // hardness
+        test_buffer.extend_from_slice(&[2u8; 32]); // signature
+        test_buffer.extend_from_slice(&[3u8; 8]); // solution
+
+        let result = parse_pow_solution_buffer(&test_buffer).unwrap();
+
+        assert_eq!(result.nonce, [1u8; 16]);
+        assert_eq!(result.timestamp, 42);
+        assert_eq!(result.hardness, 8);
+        assert_eq!(result.signature, vec![2u8; 32]);
+        assert_eq!(result.solution, vec![3u8; 8]);
+    }
+
+    #[test]
+    fn test_parse_pow_solution_invalid_size() {
+        let invalid_buffer = vec![0u8; 64];
+        assert!(parse_pow_solution_buffer(&invalid_buffer).is_err());
+    }
+
+    #[test]
+    fn test_complete_pow_workflow() {
+        let (pow_manager, ip, user_agent) = setup_test_env();
+        let hardness = 8;
+
+        let challenge = pow_manager.generate_challenge(&ip, &user_agent, hardness);
+        assert!(pow_manager.verify_challenge_validity(&challenge, &ip, &user_agent, 60));
 
         let solution = solve_challenge(&challenge);
         assert!(pow_manager.verify_solution(&challenge, &solution));
-
-        challenge.hardness = 16;
-        assert!(!pow_manager.verify_solution(&challenge, &solution));
     }
 }

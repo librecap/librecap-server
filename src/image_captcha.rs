@@ -1,4 +1,5 @@
 use bincode;
+use blake3::Hasher;
 use flate2::read::GzDecoder;
 use hmac::{Hmac, Mac};
 use image::{DynamicImage, ImageOutputFormat, Rgb, RgbImage};
@@ -16,6 +17,18 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 type HmacSha256 = Hmac<Sha256>;
+
+pub fn combine_byte_arrays(byte_arrays: &[Vec<u8>]) -> Vec<u8> {
+    let total_size = byte_arrays.len() * 4 + byte_arrays.iter().map(|arr| arr.len()).sum::<usize>();
+    let mut buffer = Vec::with_capacity(total_size);
+
+    for arr in byte_arrays {
+        buffer.extend_from_slice(&(arr.len() as u32).to_be_bytes());
+        buffer.extend_from_slice(arr);
+    }
+
+    buffer
+}
 
 #[derive(Debug, Deserialize)]
 struct PickleCaptchaData {
@@ -39,7 +52,6 @@ pub struct ImageCaptchaManager {
 fn get_data(dataset_path: &Path) -> Result<CaptchaData, Box<dyn std::error::Error>> {
     let cache_path = dataset_path.with_extension("cache");
 
-    // Try to load from cache first
     if cache_path.exists() {
         let mut file = File::open(&cache_path)?;
         let mut buffer = Vec::new();
@@ -47,7 +59,6 @@ fn get_data(dataset_path: &Path) -> Result<CaptchaData, Box<dyn std::error::Erro
         return Ok(bincode::deserialize(&buffer)?);
     }
 
-    // Load and process original data
     let mut file = File::open(dataset_path)?;
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer)?;
@@ -61,27 +72,22 @@ fn get_data(dataset_path: &Path) -> Result<CaptchaData, Box<dyn std::error::Erro
         return Err("Invalid dataset format".into());
     }
 
-    // Convert to our serializable format
     let mut data = CaptchaData {
         data_type: pickle_data.data_type,
         keys: HashMap::new(),
     };
 
-    // Process all images: decompress, resize, and convert to WebP
     for (key, images) in pickle_data.keys {
         let mut processed_images = Vec::new();
         for image_value in images {
             if let pickle::Value::Bytes(compressed) = image_value {
-                // Decompress
                 let mut decoder = GzDecoder::new(&compressed[..]);
                 let mut decompressed = Vec::new();
                 decoder.read_to_end(&mut decompressed)?;
 
-                // Load and resize
                 let img = image::load_from_memory(&decompressed)?;
                 let resized = img.resize(100, 100, image::imageops::FilterType::Triangle);
 
-                // Convert to WebP
                 let mut webp_data = Vec::new();
                 let mut cursor = Cursor::new(&mut webp_data);
                 resized.write_to(&mut cursor, ImageOutputFormat::WebP)?;
@@ -92,7 +98,6 @@ fn get_data(dataset_path: &Path) -> Result<CaptchaData, Box<dyn std::error::Erro
         data.keys.insert(key, processed_images);
     }
 
-    // Save processed data to cache
     let cache_data = bincode::serialize(&data)?;
     std::fs::write(&cache_path, cache_data)?;
 
@@ -201,7 +206,7 @@ impl ImageCaptchaManager {
             .unwrap()
             .as_secs();
 
-        let mut hasher = blake3::Hasher::new();
+        let mut hasher = Hasher::new();
         hasher.update(&nonce);
         hasher.update(&correct_indices);
         let indices_hash = hasher.finalize();
@@ -261,7 +266,7 @@ impl ImageCaptchaManager {
         let mut sorted_indices = selected_indices.to_vec();
         sorted_indices.sort_unstable();
 
-        let mut hasher = blake3::Hasher::new();
+        let mut hasher = Hasher::new();
         hasher.update(nonce);
         hasher.update(&sorted_indices);
         let selected_hash = hasher.finalize();
