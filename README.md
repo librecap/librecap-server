@@ -27,17 +27,31 @@
 
 ## 🚀 Quick Start
 
-```bash
-git clone https://github.com/librecap/librecap-server.git
-cd librecap-server
+Want to add LibreCap to your Actix app? Add this to your `Cargo.toml`:
+```toml
+[dependencies]
+librecap-server = { git = "https://github.com/librecap/librecap-server", branch = "main" }
 ```
 
-```bash
-redis-server --daemonize yes --port 6379
-cargo run --release
+And update your `main.rs`:
+```rust
+use librecap_server::{add_librecap, initialize_app_state};
+
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    let app_state = initialize_app_state().await;
+    HttpServer::new(move || {
+        App::new()
+            .app_data(app_state.clone())
+            .configure(add_librecap)
+    })
+    .bind(("127.0.0.1", 8080))?
+    .run()
+    .await
+}
 ```
 
-Thats it! You can now point your client captcha box via the `data-gateway=""` attribute to the server.
+Remember to start Redis first: `redis-server --daemonize yes`
 
 ## 🌟 Overview
 
@@ -57,6 +71,61 @@ The client-side component can be found at: https://github.com/librecap/librecap
 - **Redis-Based Session Management**: Maintains security state efficiently
 - **Rate Limiting**: Prevents abuse through tiered difficulty increases
 - **Performance**: Fast response times with minimal resource usage
+
+## 📦 Installation
+
+### Use Cargo (Recommended)
+
+To integrate LibreCap into your existing Actix web application, follow these steps:
+
+1. Add the dependency to your `Cargo.toml`:
+```toml
+[dependencies]
+librecap-server = { git = "https://github.com/librecap/librecap-server", branch = "main" }
+actix-web = "4"
+```
+
+2. Set up Redis (required for session management):
+```bash
+redis-server --daemonize yes
+```
+
+3. Integrate LibreCap into your Actix application:
+```rust
+use actix_web::{App, HttpServer};
+use librecap_server::{add_librecap, initialize_app_state};
+
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    // Initialize the LibreCap state (connects to Redis and loads resources)
+    let app_state = initialize_app_state().await;
+
+    HttpServer::new(move || {
+        App::new()
+            .app_data(app_state.clone())
+            // Add LibreCap routes and services
+            .configure(add_librecap)
+            // Your existing routes and services go here
+    })
+    .bind(("127.0.0.1", 8080))?
+    .run()
+    .await
+}
+```
+
+The server will now expose LibreCap endpoints at `/librecap/v1/*`. Configure your client-side LibreCap instance to point to these endpoints.
+
+### Use Git
+
+```bash
+git clone https://github.com/librecap/librecap-server.git
+cd librecap-server
+```
+
+```bash
+redis-server --daemonize yes --port 6379
+cargo run --release
+```
 
 ## 🐳 Docker setup
 

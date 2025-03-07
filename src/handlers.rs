@@ -5,7 +5,7 @@ use redis::Client as RedisClient;
 use std::net::IpAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::image_captcha::{ImageCaptchaManager, combine_byte_arrays};
+use crate::image_captcha::{combine_byte_arrays, ImageCaptchaManager};
 use crate::pow::{
     generate_pow_challenge_buffer, parse_pow_solution_buffer, PowChallenge, PowManager,
 };
