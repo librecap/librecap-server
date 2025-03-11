@@ -65,10 +65,7 @@ fn get_data(dataset_path: &Path) -> Result<CaptchaData, Box<dyn std::error::Erro
 
     let pickle_data: PickleCaptchaData = pickle::from_slice(&buffer, Default::default())?;
 
-    if pickle_data.data_type != "image"
-        || !pickle_data.keys.contains_key("smiling dog")
-        || !pickle_data.keys.contains_key("not smiling dog")
-    {
+    if pickle_data.data_type != "image" {
         return Err("Invalid dataset format".into());
     }
 

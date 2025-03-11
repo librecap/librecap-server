@@ -69,3 +69,6 @@ flate2 = "1.0"
 # Image processing
 image = { version = "0.24", features = ["webp-encoder"] }
 imageproc = "0.23"
+
+hound = "3.5"
+lame = "0.1.3"
