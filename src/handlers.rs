@@ -338,13 +338,6 @@ async fn audio_challenge_endpoint(
     buffer.extend_from_slice(&challenge.indices_hash); // 32 bytes
     buffer.extend(&challenge.audio_data);
 
-    if let Ok(mut file) = std::fs::File::create("test.mp3") {
-        if let Err(e) = std::io::Write::write_all(&mut file, &challenge.audio_data) {
-            log::error!("Failed to write debug audio file: {}", e);
-        }
-        println!("e");
-    }
-
     HttpResponse::Ok()
         .append_header(("Content-Type", "application/octet-stream"))
         .body(buffer)

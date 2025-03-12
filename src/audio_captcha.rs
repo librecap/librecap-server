@@ -120,7 +120,10 @@ impl AudioCaptchaManager {
         &self.secret_token
     }
 
-    fn wav_bytes_to_samples(&self, wav_bytes: &[u8]) -> Result<Vec<i16>, Box<dyn std::error::Error>> {
+    fn wav_bytes_to_samples(
+        &self,
+        wav_bytes: &[u8],
+    ) -> Result<Vec<i16>, Box<dyn std::error::Error>> {
         let mut cursor = Cursor::new(wav_bytes);
         let mut reader = hound::WavReader::new(&mut cursor)?;
         let samples: Vec<i16> = reader.samples().map(|s| s.unwrap_or(0)).collect();
@@ -201,33 +204,11 @@ impl AudioCaptchaManager {
     fn mix_audio(&self, base: &[i16], overlay: &[i16], position: usize) -> Vec<i16> {
         let mut result = base.to_vec();
 
-        if position >= result.len() {
-            println!(
-                "WARNING: Trying to mix at position {} which is beyond the base audio length {}",
-                position,
-                result.len()
-            );
-            return result;
-        }
-
-        let mut mixed_count = 0;
-
         for (i, &sample) in overlay.iter().enumerate() {
             if position + i < result.len() {
-                if sample != 0 {
-                    mixed_count += 1;
-                }
                 let mixed = result[position + i] as f32 + sample as f32;
                 result[position + i] = mixed.min(32767.0).max(-32767.0) as i16;
             }
-        }
-
-        if overlay.len() > 100 && mixed_count > 0 {
-            println!(
-                "Mixed {} non-zero samples from overlay of length {}",
-                mixed_count,
-                overlay.len()
-            );
         }
 
         result
@@ -243,31 +224,9 @@ impl AudioCaptchaManager {
         let mut sorted_segments = segments_with_positions.to_vec();
         sorted_segments.sort_by_key(|s| s.1);
 
-        println!("Batch mixing {} segments", sorted_segments.len());
-
-        for (i, (segment, position)) in sorted_segments.iter().enumerate() {
-            let non_zero_before = result.iter().filter(|&&s| s != 0).count();
-
+        for (_i, (segment, position)) in sorted_segments.iter().enumerate() {
             result = self.mix_audio(&result, segment, *position);
-
-            let non_zero_after = result.iter().filter(|&&s| s != 0).count();
-            println!(
-                "  Mixed segment {}: {} samples at position {}. Non-zero samples: {} -> {}",
-                i,
-                segment.len(),
-                position,
-                non_zero_before,
-                non_zero_after
-            );
         }
-
-        let final_non_zero = result.iter().filter(|&&s| s != 0).count();
-        println!(
-            "Final mix result: {} samples, {} non-zero ({:.2}%)",
-            result.len(),
-            final_non_zero,
-            100.0 * final_non_zero as f32 / result.len() as f32
-        );
 
         result
     }
@@ -494,16 +453,70 @@ impl AudioCaptchaManager {
                 result = self.change_volume(&result, volume);
             }
             "low" => {
-                let speed = rng.gen_range(0.9..1.1);
+                let speed = rng.gen_range(0.95..1.05);
                 result = self.change_speed(&result, speed);
 
-                let volume = rng.gen_range(0.9..1.1);
+                let volume = rng.gen_range(0.95..1.05);
                 result = self.change_volume(&result, volume);
 
-                if rng.gen_bool(0.3) {
+                if rng.gen_bool(0.5) {
                     let noise_level = rng.gen_range(0.005..0.02);
                     result = self.add_background_noise(&result, noise_level);
                 }
+
+                result = self.normalize_audio(&result, 0.25);
+            }
+            "medium" => {
+                let speed = rng.gen_range(0.8..1.2);
+                result = self.change_speed(&result, speed);
+
+                let volume = rng.gen_range(0.8..1.2);
+                result = self.change_volume(&result, volume);
+
+                if rng.gen_bool(0.7) {
+                    let noise_level = rng.gen_range(0.01..0.04);
+                    result = self.add_background_noise(&result, noise_level);
+                }
+
+                if rng.gen_bool(0.3) {
+                    let reverb_level = rng.gen_range(0.05..0.25);
+                    let reverb_delay = rng.gen_range(50..150);
+
+                    let silence = vec![0i16; reverb_delay as usize];
+                    let reverb_tail = self.change_volume(&result, reverb_level);
+                    let mut delayed_reverb = silence.clone();
+                    delayed_reverb.extend(reverb_tail);
+
+                    result = self.mix_audio(&result, &delayed_reverb, 0);
+                }
+
+                result = self.normalize_audio(&result, 0.2);
+            }
+            "high" => {
+                let speed = rng.gen_range(0.7..1.3);
+                result = self.change_speed(&result, speed);
+
+                let volume = rng.gen_range(0.7..1.3);
+                result = self.change_volume(&result, volume);
+
+                if rng.gen_bool(0.8) {
+                    let noise_level = rng.gen_range(0.02..0.05);
+                    result = self.add_background_noise(&result, noise_level);
+                }
+
+                if rng.gen_bool(0.4) {
+                    let reverb_level = rng.gen_range(0.1..0.3);
+                    let reverb_delay = rng.gen_range(30..120);
+
+                    let silence = vec![0i16; reverb_delay as usize];
+                    let reverb_tail = self.change_volume(&result, reverb_level);
+                    let mut delayed_reverb = silence.clone();
+                    delayed_reverb.extend(reverb_tail);
+
+                    result = self.mix_audio(&result, &delayed_reverb, 0);
+                }
+
+                result = self.normalize_audio(&result, 0.18);
             }
             _ => {
                 let speed = rng.gen_range(0.85..1.15);
@@ -513,21 +526,11 @@ impl AudioCaptchaManager {
                 result = self.change_volume(&result, volume);
 
                 if rng.gen_bool(0.5) {
-                    let noise_level = rng.gen_range(0.01..0.05);
+                    let noise_level = rng.gen_range(0.01..0.03);
                     result = self.add_background_noise(&result, noise_level);
                 }
 
-                if effect_level == "high" && rng.gen_bool(0.3) {
-                    let reverb_level = rng.gen_range(0.1..0.3);
-                    let reverb_delay = rng.gen_range(30..80);
-
-                    let silence = vec![0i16; reverb_delay as usize];
-                    let reverb_tail = self.change_volume(samples, reverb_level);
-                    let mut delayed_reverb = silence.clone();
-                    delayed_reverb.extend(reverb_tail);
-
-                    result = self.mix_audio(&result, &delayed_reverb, 0);
-                }
+                result = self.normalize_audio(&result, 0.22);
             }
         }
 
@@ -606,6 +609,34 @@ impl AudioCaptchaManager {
         }
     }
 
+    fn calculate_rms_level(&self, samples: &[i16]) -> f32 {
+        if samples.is_empty() {
+            return 0.0;
+        }
+
+        let sum_squares: f64 = samples.iter().map(|&s| (s as f64).powi(2)).sum();
+
+        let mean_square = sum_squares / samples.len() as f64;
+        (mean_square.sqrt() / 32767.0) as f32
+    }
+
+    fn normalize_audio(&self, samples: &[i16], target_level: f32) -> Vec<i16> {
+        let current_level = self.calculate_rms_level(samples);
+
+        if current_level < 0.0001 {
+            return samples.to_vec();
+        }
+
+        let gain_factor = target_level / current_level;
+        self.change_volume(samples, gain_factor)
+    }
+
+    fn reverse_audio(&self, samples: &[i16]) -> Vec<i16> {
+        let mut result = samples.to_vec();
+        result.reverse();
+        result
+    }
+
     pub fn generate_character_challenge(
         &self,
         ip: &str,
@@ -621,8 +652,6 @@ impl AudioCaptchaManager {
         let mut available_numbers = Vec::new();
         let mut available_letters = Vec::new();
 
-        println!("Available keys in data: {}", self.data.keys.len());
-
         for (char_key, langs) in &self.data.keys {
             if langs.contains_key(language) {
                 if char_key.chars().all(|c| c.is_ascii_digit()) {
@@ -632,17 +661,6 @@ impl AudioCaptchaManager {
                 }
             }
         }
-
-        println!(
-            "Available numbers for {}: {}",
-            language,
-            available_numbers.len()
-        );
-        println!(
-            "Available letters for {}: {}",
-            language,
-            available_letters.len()
-        );
 
         if character_type == "numbers" && available_numbers.len() < count {
             return Err(format!(
@@ -733,35 +751,25 @@ impl AudioCaptchaManager {
         let mut character_segments = Vec::new();
         let mut has_valid_audio = false;
 
-        println!("Selected characters: {:?}", selected_chars);
-
-        for (idx, char_key) in selected_chars.iter().enumerate() {
-            println!("Processing character {}: {}", idx, char_key);
-
+        for (_idx, char_key) in selected_chars.iter().enumerate() {
             if let Some(char_audio) = self
                 .data
                 .keys
                 .get(char_key)
                 .and_then(|langs| langs.get(language))
             {
-                println!("  Found audio data: {} bytes", char_audio.len());
-
                 let audio = match self.wav_bytes_to_samples(char_audio) {
                     Ok(samples) => {
                         let non_zero_count = samples.iter().filter(|&&s| s != 0).count();
-                        println!(
-                            "  Converted to {} samples, {} non-zero",
-                            samples.len(),
-                            non_zero_count
-                        );
 
                         if non_zero_count > 0 {
                             has_valid_audio = true;
                         }
-                        samples
+
+                        let normalized = self.normalize_audio(&samples, 0.25);
+                        normalized
                     }
-                    Err(e) => {
-                        println!("  Failed to read WAV data: {}", e);
+                    Err(_) => {
                         let tone_duration = 500;
                         let num_samples = (WAVE_SAMPLE_RATE * tone_duration / 1000) as usize;
                         let mut tone = vec![0i16; num_samples];
@@ -777,29 +785,32 @@ impl AudioCaptchaManager {
                             };
 
                             let freq = match char_key.chars().next() {
-                                Some(c) if c.is_ascii_digit() => 400.0 + (c as u8 - b'0') as f32 * 40.0,
-                                Some(c) if c.is_ascii_lowercase() => 200.0 + (c as u8 - b'a') as f32 * 15.0,
+                                Some(c) if c.is_ascii_digit() => {
+                                    400.0 + (c as u8 - b'0') as f32 * 40.0
+                                }
+                                Some(c) if c.is_ascii_lowercase() => {
+                                    200.0 + (c as u8 - b'a') as f32 * 15.0
+                                }
                                 _ => 300.0,
                             };
 
-                            tone[i] = ((2.0 * PI * freq * t).sin() * envelope * 0.7 * 32767.0) as i16;
+                            tone[i] =
+                                ((2.0 * PI * freq * t).sin() * envelope * 0.7 * 32767.0) as i16;
                         }
 
-                        println!("  Generated fallback tone with {} samples", tone.len());
                         has_valid_audio = true;
                         tone
                     }
                 };
 
                 let processed_audio = if obfuscate {
-                    self.apply_audio_effects(&audio, "minimal")
+                    self.apply_audio_effects(&audio, "low")
                 } else {
                     audio
                 };
 
                 character_segments.push(processed_audio);
             } else {
-                println!("  No audio data found for language {}", language);
                 let tone_duration = 500;
                 let num_samples = (WAVE_SAMPLE_RATE * tone_duration / 1000) as usize;
                 let mut tone = vec![0i16; num_samples];
@@ -823,31 +834,43 @@ impl AudioCaptchaManager {
                     tone[i] = ((2.0 * PI * freq * t).sin() * envelope * 0.7 * 32767.0) as i16;
                 }
 
-                println!("  Generated fallback tone with {} samples", tone.len());
                 has_valid_audio = true;
                 character_segments.push(tone);
             }
         }
 
-        println!("Character segments: {}", character_segments.len());
-
         if !has_valid_audio {
-            println!("No valid audio found, generating beep sequence");
             character_segments.clear();
 
-            for (i, _) in selected_chars.iter().enumerate() {
-                let char_freq = 440.0 + (i as f32 * 100.0);
-                let tone_duration = 300;
+            for (i, char_key) in selected_chars.iter().enumerate() {
+                let char_freq = match char_key.chars().next() {
+                    Some(c) if c.is_ascii_digit() => 440.0 + (c as u8 - b'0') as f32 * 60.0,
+                    Some(c) if c.is_ascii_lowercase() => 330.0 + (c as u8 - b'a') as f32 * 25.0,
+                    _ => 440.0 + (i as f32 * 100.0),
+                };
+
+                let tone_duration = rng.gen_range(300..500);
                 let num_samples = (WAVE_SAMPLE_RATE * tone_duration / 1000) as usize;
                 let mut tone = vec![0i16; num_samples];
 
                 for j in 0..num_samples {
                     let t = j as f32 / WAVE_SAMPLE_RATE as f32;
-                    tone[j] = ((2.0 * PI * char_freq * t).sin() * 0.7 * 32767.0) as i16;
+
+                    let envelope = if j < num_samples / 5 {
+                        j as f32 / (num_samples as f32 / 5.0)
+                    } else if j > num_samples * 4 / 5 {
+                        (num_samples - j) as f32 / (num_samples as f32 / 5.0)
+                    } else {
+                        1.0
+                    };
+
+                    tone[j] = ((2.0 * PI * char_freq * t).sin() * envelope * 0.7 * 32767.0) as i16;
                 }
 
-                println!("  Generated beep {} with {} samples", i, tone.len());
-                character_segments.push(tone);
+                let effect_level = if i % 2 == 0 { "low" } else { "minimal" };
+                let processed_tone = self.apply_audio_effects(&tone, effect_level);
+
+                character_segments.push(processed_tone);
             }
         }
 
@@ -856,10 +879,6 @@ impl AudioCaptchaManager {
 
         for (i, segment) in character_segments.iter().enumerate() {
             segments_with_positions.push((segment.clone(), current_position));
-            println!(
-                "Positioned segment {} at sample position {}",
-                i, current_position
-            );
 
             let padding_duration = if i < character_segments.len() - 1 {
                 rng.gen_range(800..1200)
@@ -873,11 +892,6 @@ impl AudioCaptchaManager {
         let outro_silence_duration = rng.gen_range(800..1200);
         let total_length =
             current_position + (WAVE_SAMPLE_RATE as usize * outro_silence_duration / 1000);
-        println!(
-            "Total audio length: {} samples ({:.2} seconds)",
-            total_length,
-            total_length as f32 / WAVE_SAMPLE_RATE as f32
-        );
         let mut combined_audio = vec![0i16; total_length];
 
         combined_audio = self.batch_mix_audio(&combined_audio, &segments_with_positions);
@@ -885,16 +899,23 @@ impl AudioCaptchaManager {
         if obfuscate {
             let mut distractors = Vec::new();
 
-            let num_distractors = 2 * count + rng.gen_range(1..3);
+            let num_distractors = 2 * count + rng.gen_range(2..5);
             let sound_types = [
-                "whisper", "breath", "hum", "whisper", "breath"
+                "speech", "whisper", "throat", "hum", "breath", "speech", "whisper", "breath",
             ];
 
             for _ in 0..num_distractors {
                 let sound_type = sound_types.choose(&mut rng).unwrap();
-                let human_noise = self.generate_human_sound(sound_type, None);
+                let duration = rng.gen_range(200..600);
+                let human_noise = self.generate_human_sound(sound_type, Some(duration));
 
-                let processed_noise = self.apply_audio_effects(&human_noise, "minimal");
+                let effect_level = match rng.gen_range(0..10) {
+                    0..=3 => "low",
+                    4..=7 => "medium",
+                    _ => "high",
+                };
+
+                let processed_noise = self.apply_audio_effects(&human_noise, effect_level);
                 distractors.push(processed_noise);
             }
 
@@ -903,7 +924,7 @@ impl AudioCaptchaManager {
                     let next_char_pos = segments_with_positions[idx + 1].1;
                     let gap = next_char_pos - *char_pos;
 
-                    if gap > WAVE_SAMPLE_RATE as usize {
+                    if gap > WAVE_SAMPLE_RATE as usize / 2 {
                         let num_in_gap = rng.gen_range(1..3);
 
                         for gap_idx in 0..num_in_gap {
@@ -925,6 +946,68 @@ impl AudioCaptchaManager {
                     }
                 }
             }
+
+            for (_idx, (segment, char_pos)) in segments_with_positions.iter().enumerate() {
+                if rng.gen_bool(0.7) {
+                    if let Some(distractor) = distractors.choose(&mut rng) {
+                        let overlap_type = rng.gen_range(0..3);
+
+                        let overlap_pos = match overlap_type {
+                            0 => char_pos.saturating_sub(distractor.len() / 2),
+                            1 => char_pos + segment.len().saturating_sub(distractor.len() / 2),
+                            _ => char_pos + segment.len() / 2 - distractor.len() / 4,
+                        };
+
+                        let volume_level = rng.gen_range(0.15..0.25);
+                        let volume_adjusted = self.change_volume(distractor, volume_level);
+                        combined_audio =
+                            self.mix_audio(&combined_audio, &volume_adjusted, overlap_pos);
+                    }
+                }
+            }
+
+            let noise_level = rng.gen_range(0.01..0.05);
+            combined_audio = self.add_background_noise(&combined_audio, noise_level);
+
+            if rng.gen_bool(0.8) {
+                let num_noise_chars = rng.gen_range(2..count + 2);
+
+                for _ in 0..num_noise_chars {
+                    if let Some(char_key) = selected_chars.choose(&mut rng) {
+                        if let Some(char_audio) = self
+                            .data
+                            .keys
+                            .get(char_key)
+                            .and_then(|langs| langs.get(language))
+                        {
+                            match self.wav_bytes_to_samples(char_audio) {
+                                Ok(samples) => {
+                                    let reversed = self.reverse_audio(&samples);
+                                    let speed = rng.gen_range(0.7..1.2);
+                                    let speed_changed = self.change_speed(&reversed, speed);
+                                    let volume = rng.gen_range(0.08..0.15);
+                                    let volume_adjusted =
+                                        self.change_volume(&speed_changed, volume);
+
+                                    let max_pos =
+                                        combined_audio.len().saturating_sub(volume_adjusted.len());
+                                    if max_pos > 0 {
+                                        let position = rng.gen_range(0..max_pos);
+                                        combined_audio = self.mix_audio(
+                                            &combined_audio,
+                                            &volume_adjusted,
+                                            position,
+                                        );
+                                    }
+                                }
+                                Err(_) => continue,
+                            }
+                        }
+                    }
+                }
+            }
+
+            combined_audio = self.normalize_audio(&combined_audio, 0.3);
         }
 
         let audio_data = self.save_audio_to_bytes(&combined_audio, output_format)?;
